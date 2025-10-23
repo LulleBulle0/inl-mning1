@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, session
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 import mysql.connector
 from mysql.connector import Error
 
@@ -24,36 +24,47 @@ def get_db_connection():
 
 @app.route('/')
 def index():
-    return render_template('login.html')
+    return render_template('index.html')
 
-@app.route('/login', methods=['POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
     # hantera POST request från inloggningsformuläret
     if request.method == 'POST':
-        username = request.form.get("username")
-        password = request.form.get("password")
-        
+    
+        # Trimma indata för att undvika extra mellanslag
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
         # Anslut till databasen
         connection = get_db_connection()
         if connection is None:
             return "Databasanslutning misslyckades", 500
-        
+
         try:
             cursor = connection.cursor(dictionary=True)
-            
+
             # Fråga för att kontrollera om användare finns med matchande användarnamn
             query = "SELECT * FROM users WHERE username = %s"
             cursor.execute(query, (username,))
             user = cursor.fetchone()
-            
-            # Kontrollera om användaren fanns i databasen och lösenordet är korrekt.
-            # Om lösenordet är korrekt så sätt sessionsvariabler och skicka tillbaka en hälsning med användarens namn.
-            # Om lösenordet inte är korrekt skicka tillbaka ett felmeddelande med http-status 401.
-            if user['username'] == username and user['password'] == password:
-                return f'Inloggning lyckades! Välkommen {user["name"]}!'
+
+            # Debug-utskrift (ta bort eller begränsa i produktion)
+            print(f"Login attempt: username={username!r}, user_found={bool(user)}")
+
+            if not user:
+                # Användaren finns inte
+                return render_template('login.html', error='Ogiltigt användarnamn eller lösenord'), 401
+
+            # Jämför lösenord (OBS: använd hash i produktion!)
+            if user.get('password') == password:
+                session['user_id'] = user.get('id')
+                session['username'] = user.get('username')
+                flash('Inloggning lyckades!')
+                return render_template('index.html', user=user)
             else:
-                # Inloggning misslyckades, skicka http status 401 (Unauthorized)
-                return ('Ogiltigt användarnamn eller lösenord', 401)
+                flash('Ogiltigt användarnamn eller lösenord')
+                # Lösenord fel
+                return render_template('login.html'), 401
 
         except Error as e:
             print(f"Databasfel: {e}")
@@ -63,6 +74,13 @@ def login():
             if connection.is_connected():
                 cursor.close()
                 connection.close()
+    else:
+        return render_template('login.html')
+
+@app.route('/log_out')
+def log_out():
+    session.clear()
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(debug=True)
